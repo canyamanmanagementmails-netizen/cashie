@@ -1,23 +1,36 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .auth import (
+    SESSION_COOKIE,
+    Credentials,
+    current_user,
+    initialize_auth_database,
+    login as authenticate,
+    logout as end_session,
+    register as create_account,
+)
+from fastapi import Cookie, Response
+
 app = FastAPI(
     title="Cashie API",
-    description="Read-only market dashboard API. The included quotes are illustrative sample data.",
-    version="0.1.0",
+    description="Read-only market dashboard API with email/password accounts. Quotes are illustrative sample data.",
+    version="0.2.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
-    allow_credentials=False,
-    allow_methods=["GET"],
-    allow_headers=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+initialize_auth_database()
 
 
 class Asset(BaseModel):
@@ -47,14 +60,37 @@ SAMPLE_ASSETS = [
 ]
 
 
+@app.post("/api/auth/register")
+def register(credentials: Credentials, response: Response) -> dict[str, str]:
+    return create_account(credentials, response)
+
+
+@app.post("/api/auth/login")
+def login(credentials: Credentials, response: Response) -> dict[str, str]:
+    return authenticate(credentials, response)
+
+
+@app.post("/api/auth/logout")
+def logout(
+    response: Response,
+    cashie_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, str]:
+    return end_session(cashie_session, response)
+
+
+@app.get("/api/auth/me")
+def me(user: dict[str, str] = Depends(current_user)) -> dict[str, str]:
+    return user
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/api/markets", response_model=MarketResponse)
-def markets() -> MarketResponse:
-    """Return illustrative fixture data; this endpoint does not provide live quotes."""
+def markets(_: dict[str, str] = Depends(current_user)) -> MarketResponse:
+    """Return illustrative fixture data; requires a signed-in user and is not live market data."""
     return MarketResponse(
         source="demo",
         updated_at=datetime.now(timezone.utc),
